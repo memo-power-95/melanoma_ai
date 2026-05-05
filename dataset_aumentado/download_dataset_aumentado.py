@@ -741,7 +741,8 @@ def run_augmentation(downloaded: dict, needed: dict) -> dict:
     total_generated = 0
 
     for cls in TARGETS:
-        falta = needed[cls] - downloaded[cls]
+        # needed[cls] = cuántas faltan según conteo real en disco
+        falta = needed[cls]
         if falta <= 0:
             continue
 
@@ -757,6 +758,7 @@ def run_augmentation(downloaded: dict, needed: dict) -> dict:
             print(f"  [{cls}] Sin imágenes base. Saltando.")
             continue
 
+        target_total = TARGETS[cls]
         print(f"  [{cls:<26}] generando {falta} variantes "
               f"(base: {len(sources)} imágenes)...")
 
@@ -783,12 +785,12 @@ def run_augmentation(downloaded: dict, needed: dict) -> dict:
                     idx += 1
                     continue
 
-            downloaded[cls] += 1
-            generated       += 1
-            idx             += 1
+            generated += 1
+            idx       += 1
 
             if generated % 100 == 0 or generated == falta:
-                print(f"    {generated}/{falta}  ({downloaded[cls]}/{needed[cls]})")
+                real_now = count_images(folder)
+                print(f"    {generated}/{falta}  ({real_now}/{target_total})")
 
         print(f"  [{cls:<26}] +{generated} imágenes sintéticas")
 
