@@ -1,0 +1,44 @@
+{
+  "extension_superficial": {
+    "selected_originals": 60,
+    "generated_augmentations": 40,
+    "final_count": 100,
+    "available_clean_inputs": 60
+  },
+  "lentiginoso_acral": {
+    "selected_originals": 73,
+    "generated_augmentations": 27,
+    "final_count": 100,
+    "available_clean_inputs": 73
+  },
+  "lentigo_maligno": {
+    "selected_originals": 72,
+    "generated_augmentations": 28,
+    "final_count": 100,
+    "available_clean_inputs": 72
+  },
+  "no_melanoma": {
+    "selected_originals": 352,
+    "generated_augmentations": 248,
+    "final_count": 600,
+    "available_clean_inputs": 352
+  },
+  "nodular": {
+    "selected_originals": 72,
+    "generated_augmentations": 28,
+    "final_count": 100,
+    "available_clean_inputs": 72
+  },
+  "otros_mucosas": {
+    "selected_originals": 37,
+    "generated_augmentations": 63,
+    "final_count": 100,
+    "available_clean_inputs": 37
+  },
+  "otros_oculares": {
+    "selected_originals": 37,
+    "generated_augmentations": 63,
+    "final_count": 100,
+    "available_clean_inputs": 37
+  }
+}
