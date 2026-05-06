@@ -36,6 +36,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 from tqdm import tqdm
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")   # sin pantalla, guarda a archivo
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Configuración
@@ -45,7 +49,7 @@ ROOT          = Path(__file__).parent
 DATASET_DIR   = ROOT / "dataset_aumentado"
 CHECKPOINT_DIR = ROOT / "checkpoints"
 
-# Mapa: nombre de clase → ruta relativa dentro de dataset_aumentado/
+# Mapa: nombre de clase -> ruta relativa dentro de dataset_aumentado/
 CLASS_FOLDER_MAP = {
     "Extensión Superficial": "Extensión Superficial",
     "Lentiginoso Acral":     "Lentiginoso Acral",
@@ -253,6 +257,98 @@ def save_checkpoint(state: dict, path: Path):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Gráficas
+# ══════════════════════════════════════════════════════════════════════════════
+
+PLOTS_DIR = ROOT / "plots"
+
+
+def plot_training(history: dict, unfreeze_epoch: int | None = None):
+    """
+    Genera y guarda plots/training_curves.png con 3 subgráficas:
+      1. Loss  (train / val)
+      2. Accuracy (train / val)
+      3. Val macro-F1
+    Una línea vertical marca la época de descongelado del backbone.
+    """
+    PLOTS_DIR.mkdir(exist_ok=True)
+    epochs = list(range(1, len(history["train_loss"]) + 1))
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig.suptitle("Curvas de entrenamiento — Clasificador Melanoma",
+                 fontsize=13, fontweight="bold")
+
+    specs = [
+        ("train_loss", "val_loss",  "Loss",         "Loss"),
+        ("train_acc",  "val_acc",   "Accuracy",      "Accuracy"),
+        (None,         "val_f1",    "Val macro-F1",  "F1"),
+    ]
+
+    for ax, (tr_key, va_key, title, ylabel) in zip(axes, specs):
+        if tr_key:
+            ax.plot(epochs, history[tr_key], label="Train",
+                    linewidth=1.8, color="steelblue")
+        ax.plot(epochs, history[va_key], label="Val",
+                linewidth=1.8, color="tomato")
+
+        if unfreeze_epoch and unfreeze_epoch <= len(epochs):
+            ax.axvline(x=unfreeze_epoch, color="gray", linestyle="--",
+                       linewidth=1.2, label=f"Unfreeze (é{unfreeze_epoch})")
+
+        ax.set_title(title)
+        ax.set_xlabel("Época")
+        ax.set_ylabel(ylabel)
+        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    out = PLOTS_DIR / "training_curves.png"
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Gráfica guardada: {out}")
+
+
+def plot_confusion_matrix(cm: np.ndarray, class_names: list[str]):
+    """
+    Guarda plots/confusion_matrix.png con la matriz de confusión
+    normalizada (por filas) con anotaciones de porcentaje.
+    """
+    PLOTS_DIR.mkdir(exist_ok=True)
+    cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-9)
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    im = ax.imshow(cm_norm, interpolation="nearest", cmap="Blues",
+                   vmin=0, vmax=1)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    ax.set_xticks(range(len(class_names)))
+    ax.set_yticks(range(len(class_names)))
+    ax.set_xticklabels(class_names, rotation=35, ha="right", fontsize=9)
+    ax.set_yticklabels(class_names, fontsize=9)
+    ax.set_xlabel("Predicción", fontsize=10)
+    ax.set_ylabel("Real", fontsize=10)
+    ax.set_title("Matriz de confusión (normalizada por filas)",
+                 fontsize=11, fontweight="bold")
+
+    thresh = 0.5
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
+            val  = cm_norm[i, j]
+            raw  = cm[i, j]
+            color = "white" if val > thresh else "black"
+            ax.text(j, i, f"{val:.0%}\n({raw})",
+                    ha="center", va="center",
+                    fontsize=7.5, color=color)
+
+    fig.tight_layout()
+    out = PLOTS_DIR / "confusion_matrix.png"
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Gráfica guardada: {out}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Bucle de entrenamiento
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -382,7 +478,7 @@ def main():
 
     train_labels = [all_labels[i] for i in idx_train]
 
-    print(f"\n  Split  →  train: {len(idx_train)} | "
+    print(f"\n  Split -> train: {len(idx_train)} | "
           f"val: {len(idx_val)} | test: {len(idx_test)}")
     print(f"\n  {'Clase':<26} {'Train':>7} {'Val':>7} {'Test':>7}")
     print(f"  {'-'*49}")
@@ -443,6 +539,10 @@ def main():
         print(f"\n  Checkpoint cargado: {args.resume} "
               f"(época {start_epoch - 1}, best_f1={best_val_f1:.4f})")
 
+    # ── Historial de métricas para gráficas ──────────────────────────────
+    history = {"train_loss": [], "train_acc": [],
+               "val_loss":   [], "val_acc":   [], "val_f1": []}
+
     # ── Entrenamiento ──────────────────────────────────────────────────────
     print(f"\n{'─'*66}")
     backbone_unfrozen = (args.resume is not None and
@@ -481,11 +581,21 @@ def main():
         elapsed = time.time() - t0
         lr_now  = optimizer.param_groups[0]["lr"]
 
+        # Acumular historial
+        history["train_loss"].append(train_loss)
+        history["train_acc"].append(train_acc)
+        history["val_loss"].append(val_loss)
+        history["val_acc"].append(val_acc)
+        history["val_f1"].append(val_f1)
+
         print(f"  Época {epoch:>3}/{args.epochs}  "
               f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
               f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  "
               f"val_f1={val_f1:.4f}  lr={lr_now:.2e}  "
               f"({elapsed:.0f}s)")
+
+        # Guardar gráfica tras cada época (se sobreescribe)
+        plot_training(history, unfreeze_epoch=args.unfreeze_epoch)
 
         # Guardar mejor modelo (por macro-F1 en validación)
         if val_f1 > best_val_f1:
@@ -550,8 +660,12 @@ def main():
         print(f"  {CLASSES[i][:6]:<8}" +
               "".join(f"{v:>8}" for v in row))
 
-    print(f"\n  Checkpoints guardados en: {CHECKPOINT_DIR}/")
-    print(f"  Mejor val_f1 global: {best_val_f1:.4f}")
+    # ── Gráfica de matriz de confusión ────────────────────────────────────
+    plot_confusion_matrix(cm, CLASSES)
+
+    print(f"\n  Checkpoints guardados en : {CHECKPOINT_DIR}/")
+    print(f"  Gráficas guardadas en    : {PLOTS_DIR}/")
+    print(f"  Mejor val_f1 global      : {best_val_f1:.4f}")
     print(f"{'='*66}\n")
 
 
