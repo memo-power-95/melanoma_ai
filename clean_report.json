@@ -1,0 +1,10 @@
+{
+  "mode": "dry-run",
+  "dataset": "c:\\Users\\elpro\\Documents\\Github\\melanoma_ai\\dataset_aumentado",
+  "corrupt_found": 0,
+  "corrupt_removed": 0,
+  "within_class_duplicates_found": 0,
+  "within_class_duplicates_removed": 0,
+  "cross_class_near_duplicates_reported": 0,
+  "total_removed": 0
+}

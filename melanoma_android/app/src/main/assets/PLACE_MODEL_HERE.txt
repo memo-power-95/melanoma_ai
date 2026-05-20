@@ -1,0 +1,5 @@
+# Placeholder — coloca aquí el archivo melanoma_model.ptl generado por export_model.py
+# Ejecuta desde la raíz del repositorio:
+#   python export_model.py
+# Luego copia:
+#   checkpoints/melanoma_model.ptl  →  esta carpeta

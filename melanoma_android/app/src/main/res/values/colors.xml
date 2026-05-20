@@ -1,0 +1,12 @@
+<resources>
+    <color name="colorPrimary">#1565C0</color>
+    <color name="colorPrimaryDark">#0D47A1</color>
+    <color name="colorAccent">#FF6F00</color>
+    <color name="colorBackground">#F5F5F5</color>
+    <color name="colorSurface">#FFFFFF</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorWarning">#F57F17</color>
+    <color name="colorHighRisk">#C62828</color>
+    <color name="colorLowRisk">#2E7D32</color>
+    <color name="colorCardBorder">#E0E0E0</color>
+</resources>

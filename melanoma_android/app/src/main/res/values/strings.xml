@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Melanoma AI</string>
+    <string name="btn_gallery">Seleccionar imagen</string>
+    <string name="btn_camera">Usar cámara</string>
+    <string name="btn_analyze">Analizar</string>
+    <string name="hint_no_image">Toca "Seleccionar imagen" o "Usar cámara"</string>
+    <string name="label_result">Resultado:</string>
+    <string name="label_confidence">Confianza:</string>
+    <string name="label_top3">Top 3 diagnósticos:</string>
+    <string name="disclaimer">⚠️ Esta aplicación es una herramienta de apoyo. No reemplaza el diagnóstico médico profesional.</string>
+    <string name="permission_camera_rationale">La cámara es necesaria para capturar imágenes de lesiones cutáneas.</string>
+    <string name="permission_storage_rationale">Se necesita acceso al almacenamiento para seleccionar imágenes.</string>
+    <string name="loading">Analizando imagen…</string>
+    <string name="error_model">Error al cargar el modelo. Verifique el archivo melanoma_model.ptl en assets/.</string>
+    <string name="error_inference">Error durante el análisis. Intente con otra imagen.</string>
+</resources>

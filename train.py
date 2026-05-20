@@ -21,10 +21,12 @@ Uso:
 """
 
 import os
+import re
 import sys
 import argparse
 import time
 from pathlib import Path
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -33,7 +35,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torchvision import models, transforms
 from PIL import Image, UnidentifiedImageError
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from tqdm import tqdm
 import numpy as np
 import matplotlib
@@ -62,7 +64,7 @@ CLASS_FOLDER_MAP = {
 
 CLASSES     = list(CLASS_FOLDER_MAP.keys())
 NUM_CLASSES = len(CLASSES)
-IMG_SIZE    = 224          # EfficientNet-B3 acepta 300, B0 224; usamos 224 universal
+IMG_SIZE    = 224          # 224 px — coincide con la inferencia en Android (ImageClassifier.kt)
 VALID_EXTS  = {'.jpg', '.jpeg', '.png'}
 
 
@@ -118,6 +120,24 @@ def _collect_samples(dataset_dir: Path,
     return samples
 
 
+def _extract_group_id(path: Path) -> str:
+    """
+    Extrae el ID de origen de un nombre de archivo para evitar data leakage
+    entre imágenes originales y sus augmentaciones aug_*.
+
+    Ejemplos:
+        aug_ham_12345_0.jpg  -> ham_12345
+        aug_ham_12345_1.jpg  -> ham_12345
+        ham_12345.jpg        -> ham_12345
+        aug_isic_abc_rot_2   -> isic_abc_rot
+    """
+    stem = path.stem
+    if stem.startswith("aug_"):
+        stem = stem[4:]                      # quitar prefijo aug_
+    stem = re.sub(r'(_\d+)+$', '', stem)    # quitar sufijo numérico: _0, _1, _01…
+    return stem
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Transforms
 # ══════════════════════════════════════════════════════════════════════════════
@@ -127,15 +147,17 @@ _MEAN = [0.485, 0.456, 0.406]
 _STD  = [0.229, 0.224, 0.225]
 
 TRAIN_TRANSFORMS = transforms.Compose([
-    transforms.Resize((IMG_SIZE + 32, IMG_SIZE + 32)),
+    transforms.Resize((IMG_SIZE + 40, IMG_SIZE + 40)),
     transforms.RandomCrop(IMG_SIZE),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
-    transforms.RandomRotation(20),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2,
-                           saturation=0.2, hue=0.05),
+    transforms.RandomRotation(30),
+    transforms.ColorJitter(brightness=0.3, contrast=0.3,
+                           saturation=0.3, hue=0.08),
+    transforms.RandomGrayscale(p=0.05),
     transforms.ToTensor(),
     transforms.Normalize(_MEAN, _STD),
+    transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
 ])
 
 VAL_TRANSFORMS = transforms.Compose([
@@ -361,7 +383,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
     for imgs, labels in pbar:
         imgs, labels = imgs.to(device), labels.to(device)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type=device.type,
                             enabled=(device.type == "cuda")):
             out  = model(imgs)
@@ -415,16 +437,18 @@ def parse_args():
     p.add_argument("--model",       default="efficientnet_b3",
                    choices=list(AVAILABLE_MODELS),
                    help="Arquitectura base (default: efficientnet_b3)")
-    p.add_argument("--epochs",      type=int, default=40,
-                   help="Épocas totales (default: 40)")
+    p.add_argument("--epochs",      type=int, default=60,
+                   help="Épocas totales (default: 60)")
     p.add_argument("--batch-size",  type=int, default=32,
                    help="Tamaño de batch (default: 32)")
     p.add_argument("--lr",          type=float, default=1e-3,
                    help="Learning rate cabeza (default: 1e-3)")
-    p.add_argument("--lr-finetune", type=float, default=1e-4,
-                   help="LR al descongelar backbone (default: 1e-4)")
+    p.add_argument("--lr-finetune", type=float, default=5e-5,
+                   help="LR al descongelar backbone (default: 5e-5)")
     p.add_argument("--unfreeze-epoch", type=int, default=10,
                    help="Época en que se descongela el backbone (default: 10)")
+    p.add_argument("--early-stop",   type=int, default=15,
+                   help="Patience de early stopping (0 = desactivado, default: 15)")
     p.add_argument("--val-split",   type=float, default=0.15,
                    help="Fracción de validación (default: 0.15)")
     p.add_argument("--test-split",  type=float, default=0.15,
@@ -459,22 +483,41 @@ def main():
     print(f"  Dispositivo: {device}")
     print(f"  Dataset    : {dataset_dir}")
 
-    # ── Split estratificado ────────────────────────────────────────────────
+    # ── Split por grupo de origen (evita data leakage aug_*/original) ──────
+    #
+    # Las imágenes aug_* son augmentaciones de una imagen original.  Si se
+    # hace un split puramente aleatorio, el original puede acabar en train y
+    # su aug_ en val, lo que infla artificialmente las métricas de validación.
+    # Aquí agrupamos todos los índices que comparten el mismo ID de origen y
+    # hacemos el split a nivel de grupo, garantizando que original + todas sus
+    # augmentaciones caigan siempre en la misma partición.
     all_samples = _collect_samples(dataset_dir,
                                    exclude_aug=args.no_aug_samples)
     all_labels  = [s[1] for s in all_samples]
-    indices     = list(range(len(all_samples)))
 
-    idx_train_val, idx_test = train_test_split(
-        indices, test_size=args.test_split,
-        stratify=all_labels, random_state=args.seed
+    # Agrupar índices por (group_id, clase)
+    groups: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for i, (path, label) in enumerate(all_samples):
+        gid = _extract_group_id(path)
+        groups[(gid, label)].append(i)
+
+    group_keys   = list(groups.keys())
+    group_labels = [k[1] for k in group_keys]
+
+    gk_train_val, gk_test = train_test_split(
+        group_keys, test_size=args.test_split,
+        stratify=group_labels, random_state=args.seed
     )
-    labels_train_val = [all_labels[i] for i in idx_train_val]
-    val_rel = args.val_split / (1.0 - args.test_split)
-    idx_train, idx_val = train_test_split(
-        idx_train_val, test_size=val_rel,
-        stratify=labels_train_val, random_state=args.seed
+    gl_train_val = [k[1] for k in gk_train_val]
+    val_rel      = args.val_split / (1.0 - args.test_split)
+    gk_train, gk_val = train_test_split(
+        gk_train_val, test_size=val_rel,
+        stratify=gl_train_val, random_state=args.seed
     )
+
+    idx_train = [i for gk in gk_train for i in groups[gk]]
+    idx_val   = [i for gk in gk_val   for i in groups[gk]]
+    idx_test  = [i for gk in gk_test  for i in groups[gk]]
 
     train_labels = [all_labels[i] for i in idx_train]
 
@@ -500,13 +543,16 @@ def main():
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
                               sampler=sampler, num_workers=args.workers,
-                              pin_memory=(device.type == "cuda"))
+                              pin_memory=(device.type == "cuda"),
+                              persistent_workers=(args.workers > 0))
     val_loader   = DataLoader(val_ds, batch_size=args.batch_size,
                               shuffle=False, num_workers=args.workers,
-                              pin_memory=(device.type == "cuda"))
+                              pin_memory=(device.type == "cuda"),
+                              persistent_workers=(args.workers > 0))
     test_loader  = DataLoader(test_ds, batch_size=args.batch_size,
                               shuffle=False, num_workers=args.workers,
-                              pin_memory=(device.type == "cuda"))
+                              pin_memory=(device.type == "cuda"),
+                              persistent_workers=(args.workers > 0))
 
     # ── Modelo ────────────────────────────────────────────────────────────
     model = build_model(args.model, NUM_CLASSES, freeze_backbone=True)
@@ -515,7 +561,7 @@ def main():
     # ── Pérdida con pesos de clase ─────────────────────────────────────────
     class_weights = compute_class_weights(dataset_dir,
                                           args.no_aug_samples).to(device)
-    criterion     = nn.CrossEntropyLoss(weight=class_weights)
+    criterion     = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
     # ── Optimizador (solo cabeza inicialmente) ─────────────────────────────
     head_params = [p for p in model.parameters() if p.requires_grad]
@@ -542,7 +588,8 @@ def main():
     # ── Historial de métricas para gráficas ──────────────────────────────
     history = {"train_loss": [], "train_acc": [],
                "val_loss":   [], "val_acc":   [], "val_f1": []}
-
+    # ── Early stopping ─────────────────────────────────────────────────────
+    patience_counter = 0
     # ── Entrenamiento ──────────────────────────────────────────────────────
     print(f"\n{'─'*66}")
     backbone_unfrozen = (args.resume is not None and
@@ -554,10 +601,22 @@ def main():
         # Descongelar backbone en la época indicada
         if epoch == args.unfreeze_epoch and not backbone_unfrozen:
             print(f"\n  [Época {epoch}] Descongelando backbone — "
-                  f"lr={args.lr_finetune}")
+                  f"backbone lr={args.lr_finetune}, "
+                  f"head lr={args.lr_finetune * 5:.1e}")
             unfreeze_backbone(model)
-            optimizer = optim.AdamW(model.parameters(),
-                                    lr=args.lr_finetune, weight_decay=1e-4)
+            # Differential LR: backbone con lr bajo, cabeza con lr más alto
+            if args.model.startswith("efficientnet"):
+                head_module = model.classifier
+            else:
+                head_module = model.fc
+            head_ids = {id(p) for p in head_module.parameters()}
+            backbone_params = [p for p in model.parameters()
+                               if id(p) not in head_ids]
+            head_params_ft  = [p for p in head_module.parameters()]
+            optimizer = optim.AdamW([
+                {"params": backbone_params, "lr": args.lr_finetune},
+                {"params": head_params_ft,  "lr": args.lr_finetune * 5},
+            ], weight_decay=1e-4)
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=args.epochs - epoch + 1,
@@ -574,7 +633,6 @@ def main():
         scheduler.step()
 
         # Macro-F1 sobre validación
-        from sklearn.metrics import f1_score
         val_f1 = f1_score(val_labels, val_preds,
                           average="macro", zero_division=0)
 
@@ -594,12 +652,14 @@ def main():
               f"val_f1={val_f1:.4f}  lr={lr_now:.2e}  "
               f"({elapsed:.0f}s)")
 
-        # Guardar gráfica tras cada época (se sobreescribe)
-        plot_training(history, unfreeze_epoch=args.unfreeze_epoch)
+        # Guardar gráfica cada 5 épocas (evita I/O en cada época)
+        if epoch % 5 == 0 or epoch == args.epochs:
+            plot_training(history, unfreeze_epoch=args.unfreeze_epoch)
 
         # Guardar mejor modelo (por macro-F1 en validación)
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
+            patience_counter = 0
             save_checkpoint(
                 {
                     "epoch": epoch,
@@ -614,6 +674,8 @@ def main():
             )
             print(f"    ✓ Nuevo mejor modelo guardado "
                   f"(val_f1={best_val_f1:.4f})")
+        else:
+            patience_counter += 1
 
         # Checkpoint periódico cada 10 épocas
         if epoch % 10 == 0:
@@ -629,6 +691,13 @@ def main():
                 },
                 CHECKPOINT_DIR / f"epoch_{epoch:03d}.pt",
             )
+
+        # Early stopping
+        if args.early_stop > 0 and patience_counter >= args.early_stop:
+            print(f"\n  [Early stopping] Sin mejora en {patience_counter} épocas. "
+                  f"Deteniendo en época {epoch}.")
+            plot_training(history, unfreeze_epoch=args.unfreeze_epoch)
+            break
 
     # ── Evaluación final sobre test ────────────────────────────────────────
     print(f"\n{'='*66}")
