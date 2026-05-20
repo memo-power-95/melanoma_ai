@@ -427,9 +427,12 @@ def parse_args():
                    help="Época en que se descongela el backbone (default: 10)")
     p.add_argument("--early-stop",   type=int, default=15,
                    help="Patience de early stopping (0 = desactivado, default: 15)")
+    p.add_argument("--no-melanoma-weight", type=float, default=2.0,
+                   help="Multiplicador del peso de clase 'No melanoma' en la loss "
+                        "(default: 2.0 — el doble que el calculado automáticamente)")
     p.add_argument("--val-split",   type=float, default=0.15,
                    help="Fracción de validación (default: 0.15)")
-    p.add_argument("--test-split",  type=float, default=0.15,
+    p.add_argument("--test-split",  type=float, default=0.10,
                    help="Fracción de test (default: 0.15)")
     p.add_argument("--workers",     type=int, default=2,
                    help="DataLoader workers (default: 2)")
@@ -544,6 +547,7 @@ def main():
     # ── Pérdida con pesos de clase + label smoothing ───────────────────────
     class_weights = compute_class_weights(dataset_dir, aug_names,
                                           args.no_aug_samples).to(device)
+    class_weights[CLASSES.index("No melanoma")] *= args.no_melanoma_weight
     criterion     = nn.CrossEntropyLoss(weight=class_weights,
                                         label_smoothing=0.1)
 

@@ -1,0 +1,641 @@
+════════════════════════════════════════════════════════════════════════════════
+   SISTEMA DE CLASIFICACIÓN DE MELANOMA — DOCUMENTACIÓN TÉCNICA COMPLETA
+════════════════════════════════════════════════════════════════════════════════
+
+ÍNDICE
+  1. Descripción general del sistema
+  2. Problema que resuelve
+  3. Tipo de modelo y arquitectura
+  4. Clases que el modelo detecta
+  5. Dataset y datos de entrenamiento
+  6. Preprocesamiento de imágenes
+  7. Proceso de entrenamiento
+  8. Técnicas para mejorar la precisión
+  9. Métricas de evaluación
+ 10. Despliegue en Android
+ 11. Flujo completo de inferencia (uso real)
+ 12. Limitaciones y consideraciones médicas
+ 13. Glosario de términos técnicos
+
+
+════════════════════════════════════════════════════════════════════════════════
+1. DESCRIPCIÓN GENERAL DEL SISTEMA
+════════════════════════════════════════════════════════════════════════════════
+
+MelanomaAI es un sistema de inteligencia artificial que analiza fotografías de
+lesiones cutáneas (de la piel) y las clasifica en 7 tipos distintos, indicando
+si se trata de un melanoma maligno (canceroso) o una lesión benigna.
+
+El sistema está compuesto por tres partes:
+
+  a) Modelo de IA — red neuronal entrenada para reconocer patrones visuales
+     en imágenes de lesiones de piel.
+
+  b) Script de entrenamiento (train.py) — código Python que "enseña" al modelo
+     usando miles de imágenes etiquetadas por dermatólogos.
+
+  c) Aplicación Android — app móvil que carga el modelo entrenado y permite
+     al usuario fotografiar una lesión y obtener un diagnóstico de apoyo
+     en tiempo real.
+
+
+════════════════════════════════════════════════════════════════════════════════
+2. PROBLEMA QUE RESUELVE
+════════════════════════════════════════════════════════════════════════════════
+
+El melanoma es el tipo de cáncer de piel más peligroso. Detectado a tiempo,
+la tasa de supervivencia supera el 98%; diagnosticado en etapas avanzadas,
+baja al 15-20%.
+
+El problema principal es el acceso limitado a dermatólogos especializados,
+especialmente en zonas rurales o países con sistemas de salud con escasos
+recursos. Este sistema actúa como una herramienta de cribado (screening)
+preliminar que puede:
+
+  - Alertar al paciente sobre lesiones de alto riesgo para que busque
+    atención médica urgente.
+  - Reducir la carga de consultas innecesarias para lesiones claramente
+    benignas.
+  - Ser útil en zonas sin acceso inmediato a especialistas.
+
+IMPORTANTE: El sistema NO reemplaza el diagnóstico de un médico.
+            Es una herramienta de apoyo y orientación.
+
+
+════════════════════════════════════════════════════════════════════════════════
+3. TIPO DE MODELO Y ARQUITECTURA
+════════════════════════════════════════════════════════════════════════════════
+
+FAMILIA DE MODELO: Red Neuronal Convolucional (CNN — Convolutional Neural Network)
+ARQUITECTURA BASE: EfficientNet-B3  (inicialmente desarrollado con MobileNet V2)
+FRAMEWORK:        PyTorch 2.x
+TÉCNICA:          Transfer Learning (aprendizaje por transferencia)
+
+─── ¿Qué es una CNN? ──────────────────────────────────────────────────────────
+
+Una Red Neuronal Convolucional es un tipo de inteligencia artificial diseñado
+específicamente para analizar imágenes. Funciona en capas:
+
+  Capa 1-3 (bajo nivel): Detecta bordes, líneas y texturas básicas.
+  Capa 4-7 (nivel medio): Combina esas texturas para reconocer formas
+                           y patrones más complejos.
+  Capa 8+ (alto nivel):  Reconoce estructuras completas (bordes irregulares
+                          de una lesión, variaciones de color, asimetría).
+  Capa final:            Toma toda esa información y decide a qué clase
+                          pertenece la imagen.
+
+─── Evolución de la arquitectura: de MobileNet V2 a EfficientNet-B3 ───────────
+
+El proyecto comenzó utilizando MobileNet V2 como arquitectura base.
+MobileNet V2, desarrollada por Google en 2018, fue diseñada específicamente
+para dispositivos móviles con recursos limitados:
+
+  Características de MobileNet V2:
+  • Inverted Residuals: bloques que expanden canales, aplican convolución
+    depthwise y luego los comprimen de nuevo (muy eficiente en memoria).
+  • Linear Bottlenecks: la capa de salida de cada bloque no aplica ReLU,
+    preservando mejor la información.
+  • Parámetros: 3.4 M   Tamaño: ~14 MB   Precisión ImageNet: 72.0%
+
+Tras comparar resultados, se migró a EfficientNet-B3 por su mayor precisión
+en la clasificación de lesiones cutáneas, donde las diferencias visuales
+entre clases son sutiles y requieren más capacidad de representación.
+La estructura del pipeline de entrenamiento, el preprocesamiento y el enfoque
+de Transfer Learning se mantuvieron iguales que en la versión MobileNet V2.
+
+─── ¿Por qué EfficientNet-B3 sobre MobileNet V2? ──────────────────────────────
+
+EfficientNet es una familia de modelos desarrollada por Google en 2019.
+Escala simultáneamente profundidad, anchura y resolución de la red, lo que
+le permite superar a MobileNet V2 con un tamaño de modelo moderado.
+
+  Comparación rápida:
+  ┌────────────────────┬───────────┬────────────┬──────────────────────┐
+  │ Modelo             │ Parámetros│ Tamaño     │ Precisión ImageNet   │
+  ├────────────────────┼───────────┼────────────┼──────────────────────┤
+  │ MobileNet V2       │   3.4 M   │ ~14 MB     │ 72.0%  ← v. inicial  │
+  │ ResNet-50          │  25 M     │ ~98 MB     │ 76.1%                │
+  │ EfficientNet-B0    │   5.3 M   │ ~20 MB     │ 77.1%                │
+  │ EfficientNet-B3    │  12 M     │ ~48 MB     │ 81.6%  ← versión final│
+  │ EfficientNet-B7    │  66 M     │ ~256 MB    │ 84.4%                │
+  └────────────────────┴───────────┴────────────┴──────────────────────┘
+
+EfficientNet-B3 ofrece el mejor equilibrio entre precisión y tamaño para
+una aplicación Android donde la diferenciación entre 7 tipos de melanoma
+exige mayor capacidad que la que MobileNet V2 podía ofrecer.
+
+─── ¿Qué es Transfer Learning? ────────────────────────────────────────────────
+
+Entrenar una CNN desde cero requeriría millones de imágenes y semanas de
+computación. En cambio, se usa una técnica llamada Transfer Learning:
+
+  FASE 1 — Preentrenamiento (ya hecho por Google):
+    El modelo se entrenó con ImageNet, un dataset de 1.2 millones de imágenes
+    de 1000 categorías distintas (gatos, coches, árboles, etc.).
+    En este proceso, el modelo aprendió a detectar texturas, bordes, formas
+    y estructuras visuales generales.
+
+  FASE 2 — Fine-tuning (nuestro entrenamiento):
+    Se reutiliza ese conocimiento general y se especializa para lesiones
+    de piel. Solo se necesitan miles (no millones) de imágenes.
+
+    Paso 2a: Se congela el backbone (todas las capas que detectan texturas
+             y formas) y solo se entrena la cabeza de clasificación.
+             Esto evita destruir el conocimiento previo.
+             Duración: 10 épocas.
+
+    Paso 2b: Se descongela el backbone completo con learning rates muy
+             bajos y se afina todo el modelo para las particularidades
+             de las imágenes dermatológicas.
+             Duración: hasta 50 épocas adicionales (con early stopping).
+
+─── Estructura interna del modelo ─────────────────────────────────────────────
+
+  ENTRADA: Imagen RGB de 224×224 píxeles
+
+  BACKBONE EfficientNet-B3:
+    ├── MBConv blocks (bloques de convolución eficiente)
+    ├── Squeeze-and-Excitation (atención sobre canales)
+    └── Salida: vector de 1536 características
+
+  CABEZA DE CLASIFICACIÓN (personalizada):
+    ├── Dropout(p=0.4)   → apaga 40% de neuronas aleatoriamente
+    │                      para evitar overfitting
+    └── Linear(1536 → 7) → produce 7 puntuaciones (una por clase)
+
+  SALIDA: Softmax → probabilidades de pertenecer a cada clase
+          [0.05, 0.02, 0.03, 0.07, 0.01, 0.02, 0.80]
+           ↑Ext. Sup. ↑Lent.Ac ↑Lent.Mal ↑Nod ↑Muc ↑Ocul ↑No melanoma
+
+
+════════════════════════════════════════════════════════════════════════════════
+4. CLASES QUE EL MODELO DETECTA
+════════════════════════════════════════════════════════════════════════════════
+
+El modelo distingue 7 tipos de lesiones cutáneas:
+
+┌─────┬─────────────────────────────┬─────────┬────────────────────────────────┐
+│ Idx │ Clase                       │ Riesgo  │ Descripción clínica            │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  0  │ Extensión Superficial       │  ALTO   │ Tipo más común (70% melanomas).│
+│     │                             │         │ Crece horizontalmente en la    │
+│     │                             │         │ epidermis. Bordes irregulares. │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  1  │ Lentiginoso Acral           │  ALTO   │ Aparece en palmas, plantas y   │
+│     │                             │         │ bajo las uñas. Más común en    │
+│     │                             │         │ personas de piel oscura.       │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  2  │ Lentigo Maligno             │  ALTO   │ Evolución lenta, zonas         │
+│     │                             │         │ expuestas al sol (cara, cuello)│
+│     │                             │         │ en personas mayores.           │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  3  │ Nodular                     │  ALTO   │ El más agresivo. Crece rápido  │
+│     │                             │         │ en vertical. Abultado, oscuro. │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  4  │ Mucosas                     │  ALTO   │ Melanoma en mucosas (boca,     │
+│     │                             │         │ nariz, zona genital). Raro     │
+│     │                             │         │ pero de difícil detección.     │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  5  │ Oculares                    │  ALTO   │ Melanoma en el ojo (úvea,      │
+│     │                             │         │ conjuntiva). Requiere examen   │
+│     │                             │         │ oftalmológico especializado.   │
+├─────┼─────────────────────────────┼─────────┼────────────────────────────────┤
+│  6  │ No melanoma                 │  BAJO   │ Lesión benigna o no maligna.   │
+│     │                             │         │ Incluye nevus, queratosis,     │
+│     │                             │         │ dermatofibroma, etc.           │
+└─────┴─────────────────────────────┴─────────┴────────────────────────────────┘
+
+Clases 0–5: Melanoma maligno → riesgo ALTO → se recomienda consulta urgente.
+Clase 6:    No melanoma      → riesgo BAJO → se recomienda seguimiento regular.
+
+
+════════════════════════════════════════════════════════════════════════════════
+5. DATASET Y DATOS DE ENTRENAMIENTO
+════════════════════════════════════════════════════════════════════════════════
+
+Los datos provienen de fuentes públicas de imágenes dermatológicas etiquetadas
+por dermatólogos expertos, principalmente:
+
+  - ISIC Archive (International Skin Imaging Collaboration)
+    La mayor base de datos pública de imágenes de lesiones cutáneas.
+    https://www.isic-archive.com
+
+  - HAM10000 (Human Against Machine with 10000 training images)
+    Dataset académico ampliamente usado en investigación.
+
+ESTRUCTURA DEL DATASET:
+  dataset_aumentado/
+  ├── Extensión Superficial/    ← imágenes originales + aug_*
+  ├── Lentiginoso Acral/
+  ├── Lentigo Maligno/
+  ├── Nodular/
+  ├── No melanoma/
+  └── Otros/
+      ├── Mucosas/
+      └── Oculares/
+
+DATA AUGMENTATION (aumento de datos):
+  Para aumentar la diversidad del dataset y evitar overfitting, cada imagen
+  original genera versiones modificadas artificialmente:
+
+  • Volteo horizontal y vertical aleatorio
+  • Rotación aleatoria ±30°
+  • Cambios de brillo, contraste y saturación
+  • Conversión ocasional a escala de grises (5% de probabilidad)
+  • Random Erasing: borra parches aleatorios de la imagen
+
+  Estas variaciones simulan diferentes ángulos de fotografía, condiciones
+  de iluminación y características del paciente.
+
+SPLIT DE DATOS:
+  Para evaluar el modelo de forma honesta, las imágenes se dividen en tres
+  conjuntos independientes:
+
+  ┌─────────────┬──────────┬────────────────────────────────────────────┐
+  │ Conjunto    │ % total  │ Uso                                        │
+  ├─────────────┼──────────┼────────────────────────────────────────────┤
+  │ Entrenamiento│  70%    │ El modelo aprende de estas imágenes        │
+  │ Validación  │  15%    │ Se mide el progreso durante el entrenamiento│
+  │ Test        │  15%    │ Evaluación final imparcial                 │
+  └─────────────┴──────────┴────────────────────────────────────────────┘
+
+  IMPORTANTE: El split se hace por "grupo de origen". Todas las versiones
+  aumentadas (aug_*) de una misma imagen original caen siempre en el mismo
+  conjunto. Esto evita el "data leakage" — que el modelo vea en validación
+  casi la misma imagen que ya vio en entrenamiento.
+
+
+════════════════════════════════════════════════════════════════════════════════
+6. PREPROCESAMIENTO DE IMÁGENES
+════════════════════════════════════════════════════════════════════════════════
+
+Antes de entrar al modelo, cada imagen pasa por un pipeline de transformación:
+
+DURANTE ENTRENAMIENTO:
+  1. Redimensionar a 264×264 px
+  2. Recorte aleatorio a 224×224 px       → simula encuadres distintos
+  3. Volteo horizontal/vertical aleatorio → duplica la diversidad
+  4. Rotación aleatoria ±30°
+  5. Jitter de color (brillo, contraste, saturación, tono)
+  6. Grayscale aleatorio (5%)
+  7. Conversión a tensor (valores 0-1)
+  8. Normalización ImageNet:
+       Restar media:   [0.485, 0.456, 0.406]   (por canal R, G, B)
+       Dividir std:    [0.229, 0.224, 0.225]
+  9. Random Erasing (25% probabilidad, borra 2-15% del área)
+
+DURANTE VALIDACIÓN/TEST/INFERENCIA:
+  1. Redimensionar a 224×224 px (igual que Android)
+  2. Conversión a tensor
+  3. Normalización ImageNet (mismos valores)
+
+La normalización ImageNet es esencial porque el backbone fue preentrenado
+con esos valores. Sin ella, el modelo recibe distribuciones de datos muy
+distintas a las que aprendió y su precisión cae drásticamente.
+
+
+════════════════════════════════════════════════════════════════════════════════
+7. PROCESO DE ENTRENAMIENTO
+════════════════════════════════════════════════════════════════════════════════
+
+HARDWARE RECOMENDADO: GPU NVIDIA (mínimo 6 GB VRAM), ideal GPU T4 en Colab.
+FRAMEWORK: PyTorch con Mixed Precision (AMP — Automatic Mixed Precision)
+
+─── Algoritmo de optimización: AdamW ──────────────────────────────────────────
+
+AdamW es una variante mejorada de Adam (Adaptive Moment Estimation).
+Ajusta el learning rate de forma individual para cada parámetro del modelo
+y añade weight decay (regularización L2) para penalizar pesos muy grandes,
+reduciendo el overfitting.
+
+  Fase 1 (solo cabeza): lr = 0.001
+  Fase 2 (fine-tuning):
+    backbone lr = 0.00005  (muy conservador para no destruir el aprendizaje previo)
+    head lr    = 0.00025   (5× más alto, la cabeza sigue aprendiendo más rápido)
+
+─── Función de pérdida: CrossEntropyLoss ──────────────────────────────────────
+
+Mide cuán equivocadas son las predicciones del modelo en cada paso.
+El modelo intenta minimizar este valor a lo largo del entrenamiento.
+
+Modificaciones aplicadas:
+  • Class Weights: Las clases con menos imágenes reciben mayor peso en la
+    pérdida, forzando al modelo a prestarles más atención.
+    La clase "No melanoma" tiene un peso ×2 adicional para mejorar su
+    detección (problemática históricamente).
+  • Label Smoothing (0.1): En vez de enseñar "100% clase A", enseña
+    "90% clase A, 10% distribuido". Reduce la sobreconfianza del modelo.
+
+─── Learning Rate Scheduler: CosineAnnealingLR ────────────────────────────────
+
+El learning rate no es fijo durante el entrenamiento. Sigue una curva coseno:
+empieza alto, baja gradualmente hasta casi cero. Esto permite al modelo hacer
+pasos grandes al principio y refinamientos precisos al final.
+
+─── Balanceo de mini-batches: WeightedRandomSampler ───────────────────────────
+
+Si una clase tiene 10× más imágenes que otra, el modelo aprende mucho mejor
+esa clase. Para compensar, cada mini-batch se construye muestreando cada
+clase proporcionalmente (las clases pequeñas se repiten más).
+
+─── Gradient Clipping ─────────────────────────────────────────────────────────
+
+Limita la magnitud máxima de los gradientes a 1.0. Esto evita el "exploding
+gradient problem" — situación donde los gradientes se vuelven tan grandes
+que el modelo diverge y deja de aprender.
+
+─── Early Stopping ────────────────────────────────────────────────────────────
+
+Si el modelo no mejora su macro-F1 en validación durante 15 épocas
+consecutivas, el entrenamiento se detiene automáticamente. Esto evita
+que el modelo memorice los datos de entrenamiento (overfitting) y
+desperdicia tiempo de cómputo.
+
+─── Flujo completo de una época ───────────────────────────────────────────────
+
+  Para cada mini-batch de 64 imágenes:
+    1. Cargar imágenes → aplicar transforms → mover a GPU
+    2. Forward pass: imagen → backbone → cabeza → logits
+    3. Calcular pérdida (CrossEntropy con pesos de clase)
+    4. Backward pass: calcular gradientes
+    5. Clip gradients → actualizar pesos (AdamW step)
+    6. Actualizar GradScaler (para precisión mixta)
+
+  Al final de cada época:
+    1. Evaluar en conjunto de validación (sin actualizar pesos)
+    2. Calcular macro-F1
+    3. Si mejora → guardar checkpoint best_f1.pt
+    4. Actualizar learning rate (scheduler)
+    5. Cada 5 épocas → guardar gráficas de curvas de entrenamiento
+
+
+════════════════════════════════════════════════════════════════════════════════
+8. TÉCNICAS PARA MEJORAR LA PRECISIÓN
+════════════════════════════════════════════════════════════════════════════════
+
+  ┌────────────────────────────────┬───────────────────────────────────────────┐
+  │ Técnica                        │ Qué problema resuelve                     │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Transfer Learning              │ Dataset pequeño: reutiliza conocimiento   │
+  │                                │ de 1.2M imágenes preentrenadas.           │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Data Augmentation              │ Más diversidad: el modelo no memoriza     │
+  │                                │ las mismas imágenes siempre.              │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Class Weights + Sampler        │ Dataset desbalanceado: evita que el       │
+  │                                │ modelo ignore las clases pequeñas.        │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Dropout (40%)                  │ Overfitting: fuerza al modelo a no        │
+  │                                │ depender de neuronas específicas.         │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Label Smoothing                │ Sobreconfianza: el modelo no está 100%    │
+  │                                │ seguro de sus etiquetas, generaliza más.  │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Differential Learning Rates    │ Fine-tuning estable: el backbone aprende  │
+  │                                │ lento, la cabeza aprende más rápido.      │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Mixed Precision (AMP)          │ Velocidad: usa float16 en GPU, entrena    │
+  │                                │ 1.5-2× más rápido con misma precisión.    │
+  ├────────────────────────────────┼───────────────────────────────────────────┤
+  │ Group-based split              │ Data leakage: aug_* de la misma imagen    │
+  │                                │ no pueden estar en train y val a la vez.  │
+  └────────────────────────────────┴───────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+9. MÉTRICAS DE EVALUACIÓN
+════════════════════════════════════════════════════════════════════════════════
+
+─── Accuracy (precisión global) ───────────────────────────────────────────────
+
+  Porcentaje de imágenes clasificadas correctamente.
+  Limitación: si el 90% de las imágenes son "No melanoma", un modelo que
+  siempre diga "No melanoma" tendría 90% de accuracy sin aprender nada útil.
+
+─── Macro F1-Score (métrica principal) ────────────────────────────────────────
+
+  Combina Precisión y Recall para cada clase y los promedia de forma igual,
+  independientemente del tamaño de cada clase.
+
+  Precisión (Precision): De todas las veces que el modelo dijo "clase X",
+                         ¿cuántas eran realmente clase X?
+                         (mide falsos positivos)
+
+  Recall (Sensibilidad): De todas las imágenes reales de clase X,
+                         ¿cuántas identificó correctamente el modelo?
+                         (mide falsos negativos)
+
+  F1 = 2 × (Precisión × Recall) / (Precisión + Recall)
+  Macro F1 = promedio de F1 de todas las clases por igual
+
+  Un macro F1 de 1.0 es perfecto; 0.0 es el peor posible.
+  Valor actual del mejor checkpoint: 0.44 (44%) — modelo entrenado solo
+  6 épocas, sin las mejoras aplicadas. Con entrenamiento completo se
+  espera superar 0.75-0.85.
+
+─── Matriz de confusión ───────────────────────────────────────────────────────
+
+  Tabla que muestra para cada clase real qué predijo el modelo.
+  Permite identificar confusiones específicas (ej: "Extensión Superficial"
+  confundida con "No melanoma") y orientar mejoras.
+
+─── Umbral de confianza para melanoma ─────────────────────────────────────────
+
+  En la aplicación Android, no basta con tomar el argmax (la clase con mayor
+  probabilidad individual). Se computa la probabilidad COMBINADA de todas las
+  clases malignas (0-5). Si esa suma es menor al umbral (por defecto 0.60),
+  se reporta "No melanoma" aunque alguna clase maligna individual sea la más
+  probable.
+
+  Ejemplo:
+    Softmax = [0.12, 0.11, 0.09, 0.10, 0.08, 0.08, 0.42]
+    Probabilidad combinada melanoma = 0.12+0.11+0.09+0.10+0.08+0.08 = 0.58
+    0.58 < 0.60 → resultado: "No melanoma" (confianza 0.42)
+
+
+════════════════════════════════════════════════════════════════════════════════
+10. DESPLIEGUE EN ANDROID
+════════════════════════════════════════════════════════════════════════════════
+
+PROCESO DE EXPORTACIÓN:
+  1. Entrenar → checkpoint best_f1.pt (formato PyTorch estándar, ~43 MB)
+  2. export_model.py → convierte el modelo a formato TorchScript Lite (.ptl)
+     Tamaño final: ~40 MB
+  3. El archivo melanoma_model.ptl se copia a:
+     melanoma_android/app/src/main/assets/
+
+FRAMEWORK ANDROID: PyTorch Mobile 2.1 (org.pytorch)
+
+PIPELINE DE INFERENCIA EN EL DISPOSITIVO:
+  1. Usuario captura/selecciona una foto
+  2. Bitmap → escalar a 224×224 px (Bitmap.createScaledBitmap)
+  3. TensorImageUtils.bitmapToFloat32Tensor → normalización ImageNet
+  4. module.forward(inputTensor) → logits [1×7]
+  5. Softmax → probabilidades por clase
+  6. Aplicar umbral de confianza para melanoma (0.60)
+  7. Mostrar resultado: clase predicha, confianza, nivel de riesgo, top-3
+
+RENDIMIENTO ESTIMADO EN DISPOSITIVO:
+  - Tiempo de inferencia: 100-300 ms en gama media (sin GPU dedicada)
+  - Memoria modelo en RAM: ~40-80 MB
+  - Consumo de batería: mínimo (inferencia puntual, no continua)
+
+
+════════════════════════════════════════════════════════════════════════════════
+11. FLUJO COMPLETO DE USO REAL
+════════════════════════════════════════════════════════════════════════════════
+
+  USUARIO
+    │
+    ▼
+  Abre la app MelanomaAI en su teléfono Android
+    │
+    ▼
+  Fotografía la lesión cutánea o selecciona imagen de galería
+    │
+    ▼
+  La imagen se redimensiona a 224×224 y se normaliza (en el dispositivo)
+    │
+    ▼
+  El modelo TorchScript analiza la imagen (~200 ms)
+    │
+    ▼
+  Genera probabilidades para las 7 clases
+    │
+    ▼
+  ¿Probabilidad combinada de melanoma > 60%?
+    │                    │
+   SÍ                   NO
+    │                    │
+    ▼                    ▼
+  ALTO RIESGO        BAJO RIESGO
+  "Posible melanoma  "No se detectan
+  tipo X — consulte   signos de melanoma
+  a un especialista"  — seguimiento regular"
+    │                    │
+    └────────────────────┘
+                │
+                ▼
+  Muestra top-3 de clases con sus porcentajes de confianza
+
+
+════════════════════════════════════════════════════════════════════════════════
+12. LIMITACIONES Y CONSIDERACIONES MÉDICAS
+════════════════════════════════════════════════════════════════════════════════
+
+  1. HERRAMIENTA DE APOYO, NO DE DIAGNÓSTICO
+     El sistema no está certificado como dispositivo médico. Sus resultados
+     son orientativos y deben ser confirmados por un dermatólogo.
+
+  2. CALIDAD DE LA IMAGEN
+     La precisión depende de la calidad fotográfica. Imágenes borrosas, mal
+     iluminadas o desde ángulos extremos reducen la confianza del modelo.
+
+  3. LESIONES NO MELANOMA
+     El modelo no clasifica todos los tipos de cáncer de piel. El carcinoma
+     basocelular y el carcinoma escamocelular, por ejemplo, caen en "No
+     melanoma" aunque pueden requerir atención médica.
+
+  4. SESGO DEL DATASET
+     Los datos de entrenamiento provienen mayoritariamente de pacientes de
+     piel clara. El rendimiento puede ser menor en pieles oscuras, donde el
+     melanoma lentiginoso acral es más frecuente.
+
+  5. UMBRAL DE CONFIANZA CONFIGURABLE
+     Un umbral bajo → más alarmas → más consultas innecesarias.
+     Un umbral alto → menos alarmas → riesgo de no detectar melanomas reales.
+     El umbral de 0.60 es un compromiso; debe ajustarse según el contexto
+     clínico con supervisión médica.
+
+
+════════════════════════════════════════════════════════════════════════════════
+13. GLOSARIO DE TÉRMINOS TÉCNICOS
+════════════════════════════════════════════════════════════════════════════════
+
+  Accuracy         Porcentaje de predicciones correctas sobre el total.
+
+  AdamW            Algoritmo de optimización adaptativo con weight decay.
+
+  AMP              Automatic Mixed Precision. Usa float16 para acelerar
+                   el entrenamiento en GPU sin perder precisión significativa.
+
+  Backbone         Parte del modelo que extrae características visuales.
+                   En EfficientNet-B3 son los MBConv blocks preentrenados.
+
+  Batch            Mini-lote de imágenes procesadas juntas en un paso.
+
+  CNN              Convolutional Neural Network. Red neuronal diseñada
+                   para análisis de imágenes.
+
+  Checkpoint       Archivo que guarda el estado del modelo en un momento
+                   del entrenamiento para poder reanudarlo o usarlo.
+
+  CrossEntropy     Función que mide cuán distintas son las probabilidades
+                   predichas de las reales. Guía el aprendizaje.
+
+  Data Augmentation Creación artificial de variantes de imágenes para
+                   ampliar el dataset de entrenamiento.
+
+  Data Leakage     Error en que datos de entrenamiento se "filtran" al
+                   conjunto de validación, inflando artificialmente las métricas.
+
+  Dropout          Técnica que desactiva neuronas aleatoriamente durante
+                   el entrenamiento para evitar overfitting.
+
+  Early Stopping   Detener el entrenamiento cuando el modelo deja de mejorar.
+
+  Epoch            Una pasada completa por todo el dataset de entrenamiento.
+
+  F1-Score         Media armónica de Precisión y Recall.
+
+  Fine-tuning      Ajuste fino de un modelo preentrenado para una tarea nueva.
+
+  Gradient Clipping Limitar el tamaño de los gradientes para estabilizar
+                   el entrenamiento.
+
+  Label Smoothing  Suavizar las etiquetas duras (0/1) para que el modelo
+                   no sea sobreconfiado.
+
+  Learning Rate    Velocidad a la que el modelo actualiza sus parámetros.
+
+  Logits           Puntuaciones crudas del modelo antes de aplicar Softmax.
+
+  Macro F1         Promedio del F1 de cada clase, tratando todas por igual.
+
+  Overfitting      El modelo memoriza los datos de entrenamiento y no
+                   generaliza bien a datos nuevos.
+
+  Recall           Sensibilidad. Proporción de positivos reales detectados.
+
+  Softmax          Función que convierte logits en probabilidades (suman 1.0).
+
+  Transfer Learning Reutilizar un modelo preentrenado para una tarea distinta.
+
+  TorchScript      Formato de PyTorch para serializar modelos para producción.
+
+  Weight Decay     Penalización a pesos grandes del modelo (regularización L2).
+
+  WeightedSampler  Muestreador que equilibra las clases en cada mini-batch.
+
+
+════════════════════════════════════════════════════════════════════════════════
+   REFERENCIAS Y CRÉDITOS
+════════════════════════════════════════════════════════════════════════════════
+
+  Arquitectura EfficientNet:
+    Tan, M. & Le, Q.V. (2019). EfficientNet: Rethinking Model Scaling for
+    Convolutional Neural Networks. ICML 2019.
+
+  Dataset principal:
+    ISIC Archive — https://www.isic-archive.com
+    Tschandl, P. et al. (2018). HAM10000 dataset.
+    VerAHuman, Nature Medicine (2018).
+
+  Framework de entrenamiento:
+    PyTorch 2.x — https://pytorch.org
+    Torchvision — https://pytorch.org/vision
+
+  Despliegue móvil:
+    PyTorch Mobile — https://pytorch.org/mobile/android/
+
+════════════════════════════════════════════════════════════════════════════════

@@ -45,6 +45,22 @@ class ImageClassifier(context: Context) {
 
     private val IMG_SIZE = 224
 
+    /**
+     * Umbral de confianza para reportar melanoma.
+     * Si la probabilidad COMBINADA de todas las clases malignas (0–5) es
+     * inferior a este valor, el resultado se fuerza a "No melanoma".
+     *
+     * Valores orientativos:
+     *   0.50 → sin sesgo (argmax puro)
+     *   0.60 → sesgo moderado hacia "No melanoma"  ← recomendado
+     *   0.70 → sesgo fuerte  (menos alarmas, más riesgo de falsos negativos)
+     *
+     * ⚠️ ADVERTENCIA MÉDICA: bajar este umbral reduce falsas alarmas pero
+     * puede hacer que melanomas reales no sean detectados. Ajustar con
+     * cautela y siempre bajo supervisión clínica.
+     */
+    private val MELANOMA_CONFIDENCE_THRESHOLD = 0.60f
+
     private val module: Module
 
     init {
@@ -82,11 +98,23 @@ class ImageClassifier(context: Context) {
         // Softmax
         val softmax = softmax(scores)
 
-        // Top-3
+        // Probabilidad combinada de todas las clases malignas (índices 0–5)
+        val melanomaTotalProb = (0..5).sumOf { softmax[it].toDouble() }.toFloat()
+
+        // Ordenar por probabilidad descendente
         val indexed = softmax.mapIndexed { idx, score -> idx to score }
             .sortedByDescending { it.second }
 
-        val predictions = indexed.map { (idx, score) ->
+        // Aplicar umbral: si la confianza melanoma total < threshold → "No melanoma"
+        val finalIndexed = if (melanomaTotalProb < MELANOMA_CONFIDENCE_THRESHOLD) {
+            val noMelIdx = 6
+            listOf(noMelIdx to (1f - melanomaTotalProb))
+                .plus(indexed.filter { it.first != noMelIdx })
+        } else {
+            indexed
+        }
+
+        val predictions = finalIndexed.map { (idx, score) ->
             Prediction(
                 className   = classes[idx],
                 confidence  = score,
